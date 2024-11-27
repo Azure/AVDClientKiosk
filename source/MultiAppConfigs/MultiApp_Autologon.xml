@@ -1,5 +1,5 @@
-<?xml version="1.0" encoding="utf-8" ?>
-<AssignedAccessConfiguration xmlns="http://schemas.microsoft.com/AssignedAccess/2017/config" xmlns:rs5="http://schemas.microsoft.com/AssignedAccess/201810/config" xmlns:v5="http://schemas.microsoft.com/AssignedAccess/2022/config">
+<?xml version="1.0" encoding="utf-8"?>
+<AssignedAccessConfiguration xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns="http://schemas.microsoft.com/AssignedAccess/2017/config" xmlns:default="http://schemas.microsoft.com/AssignedAccess/2017/config" xmlns:rs5="http://schemas.microsoft.com/AssignedAccess/201810/config" xmlns:v3="http://schemas.microsoft.com/AssignedAccess/2020/config" xmlns:v5="http://schemas.microsoft.com/AssignedAccess/2022/config">
   <Profiles>
     <Profile Id="{9A2A490F-10F6-4764-974A-43B19E722C23}">
       <AllAppsList>
@@ -22,9 +22,9 @@
     </Profile>
   </Profiles>
   <Configs>
-      <config>
+      <Config>
         <AutoLogonAccount rs5:DisplayName="Kiosk User"/>
         <DefaultProfile Id="{9A2A490F-10F6-4764-974A-43B19E722C23}"/>
-      </config>
+      </Config>
   </Configs>
 </AssignedAccessConfiguration>

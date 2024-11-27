@@ -24,9 +24,9 @@
     </Profile>
   </Profiles>
   <Configs>
-    <config>
+    <Config>
       <AutoLogonAccount rs5:DisplayName="Kiosk User"/>
       <DefaultProfile Id="{9A2A490F-10F6-4764-974A-43B19E722C23}"/>
-    </config>
+    </Config>
   </Configs>
 </AssignedAccessConfiguration>

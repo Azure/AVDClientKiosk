@@ -4,7 +4,7 @@
     <Profile Id="{9A2A490F-10F6-4764-974A-43B19E722C23}">
       <AllAppsList>
         <AllowedApps>
-            <App DesktopAppPath="%PROGRAMFILES%\Remote Desktop\msrdcw.exe" />
+          <App DesktopAppPath="%PROGRAMFILES%\Remote Desktop\msrdcw.exe" />
           <App DesktopAppPath="%PROGRAMFILES%\Remote Desktop\msrdc.exe" />
         </AllowedApps>
       </AllAppsList>

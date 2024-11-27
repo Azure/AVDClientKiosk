@@ -50,26 +50,24 @@
     https://learn.microsoft.com/en-us/windows/configuration/kiosk-shelllauncher
     https://public.cyber.mil/stigs/gpo/
  
+.PARAMETER ApplySTIGs
+This switch parameter determines if the latest DoD Security Technical Implementation Guide Group Policy Objects are automatically downloaded
+from https://public.cyber.mil/stigs/gpo and applied via the Local Group Policy Object (LGPO) tool to the system. If they are, then several
+delta settings are applied to allow the system to communicate with Azure Active Directory and complete autologon (if applicable).
 
-.PARAMETER Version
-    This version parameter allows tracking of the installed version using configuration management software such as Microsoft Endpoint Manager or Microsoft Endpoint Configuration Manager by querying the value of the registry value: HKLM\Software\Kiosk\version.
+.PARAMETER AutoLogon
+This switch parameter determines if autologon is enabled through the Shell Launcher configuration. The Shell Launcher feature will automatically
+create a new user - 'KioskUser0' - which will not have a password and be configured to automatically logon when Windows starts.
+
+.PARAMETER AVDClientShell
+This switch parameter determines whether the Windows Shell is replaced by the Remote Desktop client for Windows or remains the default 'explorer.exe'.
+When the default 'explorer' shell is used additional local group policy settings and provisioning packages are applied to lock down the shell.
 
 .PARAMETER EnvironmentAVD
 This value determines the Azure environment to which you are connecting. It ultimately determines the Url of the Remote Desktop Feed which
 varies by environment by setting the $SubscribeUrl variable and replacing placeholders in several files during installation.
 The list of Urls can be found at
 https://learn.microsoft.com/en-us/azure/virtual-desktop/users/connect-microsoft-store?source=recommendations#subscribe-to-a-workspace.
-
-.PARAMETER AVDClientShell
-This switch parameter determines whether the Windows Shell is replaced by the Remote Desktop client for Windows or remains the default 'explorer.exe'.
-When the default 'explorer' shell is used additional local group policy settings and provisioning packages are applied to lock down the shell.
-
-.PARAMETER AutoLogon
-This switch parameter determines if autologon is enabled through the Shell Launcher configuration. The Shell Launcher feature will automatically
-create a new user - 'KioskUser0' - which will not have a password and be configured to automatically logon when Windows starts.
-
-.PARAMETER AuthenticationDeviceRemovalAction
-This string parameter determines what action is taken when a smart card or Yubikey is removed from the system. The options are 'Lock' and 'Logoff'.
 
 .PARAMETER InstallAVDClient
 This switch parameter determines if the latest Remote Desktop client for Windows is automatically downloaded from the Internet and installed
@@ -83,38 +81,52 @@ deleted on logoff.
 This switch parameter determines if the Settings App and Control Panel are restricted to only allow access to the Display Settings page. If this value is not set,
 then the Settings app and Control Panel are not displayed or accessible.
 
-.PARAMETER ApplySTIGs
-This switch parameter determines if the latest DoD Security Technical Implementation Guide Group Policy Objects are automatically downloaded
-from https://public.cyber.mil/stigs/gpo and applied via the Local Group Policy Object (LGPO) tool to the system. If they are, then several
-delta settings are applied to allow the system to communicate with Azure Active Directory and complete autologon (if applicable).
+.PARAMETER TimeOut
+This integer value determines the number of seconds in the AutoLogon scenario with the Triggers value containing 'IdleTimer' that the system will stay idle before resetting the client.
 
-.PARAMETER Yubikey
-This switch parameter determines if the WMI Event Subscription Filter also monitors for Yubikey removal.
+.PARAMETER Trigger
+This string array value determines the trigger(s) that will cause the Trigger Action to be carried out.
+When AutoLogon is true, you can choose any or all of the following: 'DeviceRemoval', 'SessionDisconnect', and 'IdleTimer'.
+When AutoLogon is false, you can leave this empty or choose 'IdleTimer' or 'DeviceRemoval' (and must select either the SmartCard, the DeviceID option, or both).
+If this value is not set then the TriggerAction is not used.
+
+.PARAMETER TriggerAction
+This string parameter determines what occurs when the specified trigger is detected. The possible values are different depending on the value of $Autologon.
+When AutoLogon is true then 'ResetClient' is allowed.
+When AutoLogon is false then 'Lock' or 'Logoff' are allowed.
+
+.PARAMETER DeviceVendorID
+This string parameter defines the Vendor ID of the hardware authentication token that if removed will trigger the action defined in "TriggerAction".
+This value is only used when "Trigger" is set to "DeviceRemoval".
+    .EXAMPLE
+    -DeviceVendorID '1050' # Yubikey Vendor ID
+
+.PARAMETER SmartCard
+This switch parameter determines if SmartCard removal will trigger the 'TriggerAction'. This value is only used when 'Trigger' is set to 'DeviceRemoval'.
+
+.PARAMETER Version
+This version parameter allows tracking of the installed version using configuration management software such as Microsoft Endpoint Manager or Microsoft Endpoint Configuration Manager by querying the value of the registry value: HKLM\Software\Kiosk\version.
 
 #>
 [CmdletBinding()]
 param (
-    [version]$Version = '5.0.0',
-
     [switch]$ApplySTIGs,
-
-    [ValidateSet('AzureCloud', 'AzureUSGovernment')]
-    [string]$EnvironmentAVD = 'AzureUSGovernment',
-
-    [switch]$InstallAVDClient,
 
     [Parameter(Mandatory, ParameterSetName = 'AutologonClientShell')]
     [Parameter(Mandatory, ParameterSetName = 'DirectLogonClientShell')]
     [switch]$AVDClientShell,
 
-    [Parameter(Mandatory, ParameterSetName = 'DirectLogonClientShell')]
-    [Parameter(ParameterSetName = 'DirectLogonExplorerShell')]
-    [ValidateSet('Lock', 'Logoff')]
-    $AuthenticationDeviceRemovalAction = 'Lock',
-
     [Parameter(Mandatory, ParameterSetName = 'AutologonClientShell')]
     [Parameter(Mandatory, ParameterSetName = 'AutologonExplorerShell')]
     [switch]$AutoLogon,
+
+    [ValidatePattern("^[0-9A-Fa-f]{4}$")]
+    [string]$DeviceVendorID,
+
+    [ValidateSet('AzureCloud', 'AzureUSGovernment')]
+    [string]$EnvironmentAVD = 'AzureUSGovernment',
+
+    [switch]$InstallAVDClient,
 
     [Parameter(ParameterSetName = 'DirectLogonClientShell')]
     [Parameter(ParameterSetName = 'DirectLogonExplorerShell')]
@@ -124,10 +136,58 @@ param (
     [Parameter(ParameterSetName = 'DirectLogonExplorerShell')]
     [switch]$ShowDisplaySettings,
 
-    [switch]$Yubikey
+    [switch]$SmartCard,
+
+    [int]$Timeout = 900,
+
+    [ValidateSet('DeviceRemoval', 'SessionDisconnect', 'IdleTimer')]
+    [string[]]$Triggers,
+
+    [ValidateSet('Lock', 'Logoff', 'ResetClient')]
+    [string]$TriggerAction,
+
+    [version]$Version = '5.0.0'
 )
 
-#region Set Variables
+#region Parameter Validation
+# To do, convert to dynamic parameters with Parameter Sets and Validation Sets
+if($AutoLogon -and ($TriggerAction -eq 'Lock' -or $TriggerAction -eq 'Logoff')) {
+    Throw 'You cannot specify a TriggerAction of Lock or Logoff with AutoLogon'
+} Elseif (-not $AutoLogon -and $TriggerAction -eq 'ResetClient') {
+    Throw 'You cannot specify a TriggerAction of ResetClient without AutoLogon'
+} ElseIf ($Triggers -contains 'DeviceRemoval' -and $SmartCard -eq $false -and ($null -eq $DeviceVendorID -or $DeviceVendorID -eq '')) {
+    Throw 'You must specify either a DeviceVendorID or SmartCard when Triggers = "DeviceRemoval"'
+}
+#endegion
+
+
+# Restart in 64-Bit PowerShell if not already running in 64-bit mode
+# primarily designed to support Microsoft Endpoint Manager application deployment
+If ($ENV:PROCESSOR_ARCHITEW6432 -eq "AMD64") {
+    $scriptArguments = $null
+    Try {
+        foreach ($k in $PSBoundParameters.keys) {
+            switch ($PSBoundParameters[$k].GetType().Name) {
+                "SwitchParameter" { If ($PSBoundParameters[$k].IsPresent) { $scriptArguments += "-$k " } }
+                "String" { If ($PSBoundParameters[$k] -match '_') { $scriptArguments += "-$k `"$($PSBoundParameters[$k].Replace('_',' '))`" " } Else { $scriptArguments += "-$k `"$($PSBoundParameters[$k])`" " } }
+                "String[]" { $ScriptArguments += "-$k `"$($PSBoundParameters[$k] -join '`",`"')`" " }
+                "Int32" { $scriptArguments += "-$k $($PSBoundParameters[$k]) " }
+                "Boolean" { $scriptArguments += "-$k `$$($PSBoundParameters[$k]) " }
+                "Version" { $scriptArguments += "-$k `"$($PSBoundParameters[$k])`" " }
+            }
+        }
+        If ($null -ne $scriptArguments) {
+            $RunScript = Start-Process -FilePath "$env:WINDIR\SysNative\WindowsPowershell\v1.0\PowerShell.exe" -ArgumentList "-File `"$PSCommandPath`" $scriptArguments" -PassThru -Wait -NoNewWindow
+        }
+        Else {
+            $RunScript = Start-Process -FilePath "$env:WINDIR\SysNative\WindowsPowershell\v1.0\PowerShell.exe" -ArgumentList "-File `"$PSCommandPath`"" -PassThru -Wait -NoNewWindow
+        }
+    }
+    Catch {
+        Throw "Failed to start 64-bit PowerShell"
+    }
+    Exit $RunScript.ExitCode
+}
 
 $Script:FullName = $MyInvocation.MyCommand.Path
 $Script:Dir = Split-Path $Script:FullName
@@ -167,41 +227,14 @@ If ($EnvironmentAVD -eq 'AzureUSGovernment') {
 Else {
     $SubscribeUrl = 'https://client.wvd.microsoft.com'
 }
+If ($null -ne $DeviceVendorID -and $DeviceVendorID -ne '') {
+    $SecurityKey = $true
+}
 # Detect Wifi Adapter in order to show Wifi Settings in system tray when necessary.
-$WifiAdapter = Get-NetAdapter | Where-Object { $_.Name -like '*Wi-Fi*' -or $_.Name -like '*Wifi*' -or $_.MediaType -like '*802.11*' }
+$WifiAdapter = Get-NetAdapter | Where-Object { $_.Name -like '*Wi-Fi*' -or $_.Name -like '*Wifi*' -or $_.MediaType -like '*802.11*' }     
+    
 # Set default exit code to 0
 $ScriptExitCode = 0
-
-#endregion Set Variables
-
-#region Restart Script in 64-bit powershell if necessary
-
-If ($ENV:PROCESSOR_ARCHITEW6432 -eq "AMD64") {
-    $scriptArguments = $null
-    Try {
-        foreach ($k in $PSBoundParameters.keys) {
-            switch ($PSBoundParameters[$k].GetType().Name) {
-                "SwitchParameter" { If ($PSBoundParameters[$k].IsPresent) { $scriptArguments += "-$k " } }
-                "String" { If ($PSBoundParameters[$k] -match '_') { $scriptArguments += "-$k `"$($PSBoundParameters[$k].Replace('_',' '))`" " } Else { $scriptArguments += "-$k `"$($PSBoundParameters[$k])`" " } }
-                "Int32" { $scriptArguments += "-$k $($PSBoundParameters[$k]) " }
-                "Boolean" { $scriptArguments += "-$k `$$($PSBoundParameters[$k]) " }
-                "Version" { $scriptArguments += "-$k `"$($PSBoundParameters[$k])`" " }
-            }
-        }
-        If ($null -ne $scriptArguments) {
-            $RunScript = Start-Process -FilePath "$env:WINDIR\SysNative\WindowsPowershell\v1.0\PowerShell.exe" -ArgumentList "-File `"$PSCommandPath`" $scriptArguments" -PassThru -Wait -NoNewWindow
-        }
-        Else {
-            $RunScript = Start-Process -FilePath "$env:WINDIR\SysNative\WindowsPowershell\v1.0\PowerShell.exe" -ArgumentList "-File `"$PSCommandPath`"" -PassThru -Wait -NoNewWindow
-        }
-    }
-    Catch {
-        Throw "Failed to start 64-bit PowerShell"
-    }
-    Exit $RunScript.ExitCode
-}
-
-#endregion Restart Script in 64-bit powershell if necessary
 
 #region Functions
 
@@ -398,6 +431,7 @@ Function Write-Log {
 #endregion Functions
 
 #region Initialization
+
 New-EventLog -LogName $EventLog -Source $EventSource -ErrorAction SilentlyContinue
 
 If (-not (Test-Path $Script:LogDir)) {
@@ -424,7 +458,7 @@ $TaskschdLog = Get-WinEvent -ListLog Microsoft-Windows-TaskScheduler/Operational
 $TaskschdLog.IsEnabled = $True
 $TaskschdLog.SaveChanges()
 
-#endregion
+#endregion Inistiialization
 
 #region Remove Previous Versions
 
@@ -437,7 +471,7 @@ Write-Log -EntryType Information -EventId 3 -Message 'Running removal script in 
 #region Remove Apps
 
 # Remove Built-in Windows 10 Apps on non LTSC builds of Windows
-If (!$LTSC) {
+If (-not $LTSC) {
     Write-Log -EntryType Information -EventId 25 -Message "Starting Remove Apps Script."
     & "$DirConfigurationScripts\Remove-BuiltinApps.ps1"
 }
@@ -476,8 +510,6 @@ If ($ApplySTIGs) {
 
 #region Install AVD Client
 
-# Install AVD Client if parameter is set
-
 If ($installAVDClient) {
     Write-Log -EntryType Information -EventID 30 -Message "Running Script to install or update Visual C++ Redistributables."
     & "$DirConfigurationScripts\Install-VisualC++Redistributables.ps1"
@@ -485,7 +517,7 @@ If ($installAVDClient) {
     & "$DirConfigurationScripts\Install-AVDClient.ps1"
 }
 
-#endregion
+#endregion Install AVD Client
 
 #region KioskSettings Directory
 
@@ -513,10 +545,16 @@ Copy-Item -Path "$DirConfigurationScripts\Launch-AVDClient.vbs" -Destination $Di
 # dynamically update parameters of launch script.
 $FileToUpdate = "$DirKiosk\Launch-AVDClient.ps1"
 $Content = Get-Content -Path $FileToUpdate
-$Content = $Content.Replace('<SubscribeUrl>', $SubscribeUrl)
-$Content = $Content.Replace('<Action>', $AuthenticationDeviceRemovalAction)
-If ($Yubikey) { $Content = $Content.Replace('$Yubikey = $false', '$Yubikey = $true') }
-If ($AutoLogon) { $Content = $Content.Replace('$AutoLogon = $false', '$AutoLogon = $true') }
+If ($AutoLogon) {
+    $Content = $Content.Replace('[bool]$AutoLogon', '[bool]$AutoLogon = $true')
+    $Content = $Content.Replace('[string]$SubscribeUrl', "[string]`$SubscribeUrl = '$SubscribeUrl'")
+}
+If ($SecurityKey) { $Content = $Content.Replace('[string]$DeviceVendorID', "[string]`$DeviceVendorID = '$DeviceVendorID'") }
+If ($SmartCard) { $Content = $Content.Replace('[bool]$SmartCard', '[bool]$SmartCard = $true') }
+If ($Timeout) { $Content = $Content.Replace('[int]$Timeout', "[int]`$Timeout = $Timeout")}
+If ($Triggers) { $Content = $Content.Replace('[string[]]$Triggers', "[string[]]`$Triggers = `"$($Triggers -join '`",`"')`"") }
+If ($TriggerAction) { $Content = $Content.Replace('[string]$TriggerAction', "[string]`$TriggerAction = '$TriggerAction'") }
+   
 $Content | Set-Content -Path $FileToUpdate
 
 $SchedTasksScriptsDir = Join-Path -Path $DirKiosk -ChildPath 'ScheduledTasks'
@@ -525,7 +563,9 @@ If (-not (Test-Path $SchedTasksScriptsDir)) {
 }
 Write-Log -EntryType Information -EventId 43 -Message "Copying Scheduled Task Scripts from '$DirSchedTasksScripts' to '$SchedTasksScriptsDir'"
 Get-ChildItem -Path $DirSchedTasksScripts -filter '*.*' | Copy-Item -Destination $SchedTasksScriptsDir -Force
-
+If ($Triggers -contains 'SessionDisconnect' -and $TriggerAction -eq 'ResetClient') {
+    $null = New-Item -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\EventLog' -Name 'Microsoft-Windows-TerminalServices-RDPClient/Operational' -ErrorAction SilentlyContinue
+}
 #endregion KioskSettings Directory
 
 #region Provisioning Packages
@@ -563,14 +603,14 @@ If (-not ($AVDClientShell)) {
     Write-Log -EntryType Information -EventId 47 -Message "Removing any existing shortcuts from the All Users (Public) Desktop and Default User Desktop."
     Get-ChildItem -Path "$env:Public\Desktop" -Filter '*.lnk' | Remove-Item -Force
     Get-ChildItem -Path "$env:SystemDrive\Users\Default\Desktop" -Filter '*.lnk' | Remove-Item -Force 
-
+    
     [string]$StringVersion = $Version
     $ObjShell = New-Object -ComObject WScript.Shell
     $DirShortcut = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs"
     $LinkRemoteDesktop = "Remote Desktop.lnk"
     $PathLinkRD = Join-Path $DirShortcut -ChildPath $LinkRemoteDesktop
-    
-    If ($AutoLogon -or $Yubikey) {
+        
+    If ($AutoLogon -or $SecurityKey) {
         Write-Log -EntryType Information -EventId 48 -Message "Creating a custom AVD Shortcut in Start Menu."
         $LinkAVD = "Azure Virtual Desktop.lnk"    
         $ShortcutPath = Join-Path $DirShortcut -ChildPath $LinkAVD
@@ -585,19 +625,19 @@ If (-not ($AVDClientShell)) {
         $Shortcut.Save()
     }
     Else {
-        # Do not need special Remote Desktop Client shortcut if not using AutoLogon or Yubikey. Updating it to start maximized.
+        # Do not need special Remote Desktop Client shortcut if not using AutoLogon or a Device Other than SmartCards. Updating it to start maximized.
         $ShortcutPath = $PathLinkRD
         $Shortcut = $ObjShell.CreateShortcut($ShortcutPath)
         $Shortcut.WindowStyle = 3
         $Shortcut.Save()
     }  
-
+    
     $dirStartup = "$env:SystemDrive\Users\Default\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup"
     If (-not (Test-Path -Path $dirStartup)) {
         $null = New-Item -Path $dirStartup -ItemType Directory -Force
     }
     Copy-Item -Path "$ShortcutPath" -Destination $dirStartup -Force
-
+    
     If ($AutoLogon) {
         $TaskName = "(AVD Client) - Hide KioskUser0 Start Button Context Menu"
         Write-Log -EntryType Information -EventId 49 -Message "Creating Scheduled Task: '$TaskName'."
@@ -606,7 +646,7 @@ If (-not ($AVDClientShell)) {
         $TaskScriptName = 'Hide-StartButtonRightClickMenu.ps1'
         $TaskScriptFullName = Join-Path -Path $SchedTasksScriptsDir -ChildPath $TaskScriptName
         New-EventLog -LogName $EventLog -Source $TaskScriptEventSource -ErrorAction SilentlyContinue   
-        $TaskTrigger = New-ScheduledTaskTrigger -AtLogOn -User KioskUser0
+        $TaskTrigger = New-ScheduledTaskTrigger -AtLogOn
         $TaskAction = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-executionpolicy bypass -file $TaskScriptFullName -TaskName `"$TaskName`" -EventLog `"$EventLog`" -EventSource `"$TaskScriptEventSource`" -AutoLogonUser `"KioskUser0`""
         $TaskPrincipal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
         $TaskSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 15) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries
@@ -633,11 +673,11 @@ If (-not ($AVDClientShell)) {
             $HideDir.Attributes = [System.IO.FileAttributes]::Hidden
         }
     }
-
+    
     If ($Windows10) {
         Write-Log -EntryType Information -EventId 53 -Message "Copying Start Menu Layout file for Non Admins to '$DirKiosk' directory."
         If ($ShowDisplaySettings) {
-            If ($Yubikey -or $AutoLogon) {
+            If ($AutoLogon -or $SecurityKey) {
                 $StartMenuFile = "$DirStartMenu\Win10-LayoutModificationWithSettings_AVDClient.xml"
             }
             Else {
@@ -645,7 +685,7 @@ If (-not ($AVDClientShell)) {
             }
         }
         Else {
-            If ($Yubikey -or $AutoLogon) {
+            If ($AutoLogon -or $SecurityKey) {
                 $StartMenuFile = "$DirStartMenu\Win10-LayoutModification_AVDClient.xml"
             }
             Else {
@@ -655,7 +695,7 @@ If (-not ($AVDClientShell)) {
         Copy-Item -Path $StartMenuFile -Destination "$env:SystemDrive\Users\Default\AppData\Local\Microsoft\Windows\Shell\LayoutModification.xml" -Force
     }
 }
-
+    
 #endregion Start Menu
 
 #region User Logos
@@ -725,18 +765,21 @@ If ($AutoLogon) {
     Write-Log -EntryType Information -EventId 81 -Message "Removed logoff, change password, lock workstation, and fast user switching entry points. `nlgpo.exe Exit Code: [$LastExitCode]"
 }
 Else {
-    If (!$Yubikey) {
-        if ($AuthenticationDeviceRemovalAction -eq 'Lock') {
+    If ($SmartCard -and -not $SecurityKey) {
+        if ($TriggerAction -eq 'Lock') {
             $null = cmd /c lgpo /s "$DirGPO\SmartCardLockWorkstation.inf" '2>&1'
             Write-Log -EntryType Information -EventId 82 -Message "Set 'Interactive logon: Smart Card Removal behavior' to 'Lock Workstation' via Local Group Policy Object.`nlgpo.exe Exit Code: [$LastExitCode]"
         }
-        Else {
+        Elseif ($TriggerAction -eq 'Logoff') {
             $null = cmd /c lgpo /s "$DirGPO\SmartCardLogOffWorkstation.inf" '2>&1'
             Write-Log -EntryType Information -EventId 82 -Message "Set 'Interactive logon: Smart Card Removal behavior' to 'Force Logoff Workstation' via Local Group Policy Object.`nlgpo.exe Exit Code: [$LastExitCode]"
         }
     }
-    $null = cmd /c lgpo /s "$DirGPO\MachineInactivityTimeout.inf" '2>&1'
-    Write-Log -EntryType Information -EventId 83 -Message "Set 'Interactive logon: Machine inactivity limit' to '900 seconds' via Local Group Policy Object.`nlgpo.exe Exit Code: [$LastExitCode]"
+    $sourceFile = Join-Path -Path $DirGPO -ChildPath 'MachineInactivityTimeout.inf'
+    $outFile = Join-Path -Path $env:Temp -ChildPath 'MachineInactivityTimeout.inf'
+    (Get-Content -Path $SourceFile).Replace('900', $Timeout) | Out-File $outFile
+    $null = cmd /c lgpo /s "$outFile" '2>&1'
+    Write-Log -EntryType Information -EventId 83 -Message "Set 'Interactive logon: Machine inactivity limit' to '$Timeout seconds' via Local Group Policy Object.`nlgpo.exe Exit Code: [$LastExitCode]"
 }
 
 #endregion Local GPO Settings
@@ -850,7 +893,7 @@ If ((Get-Service -Name AppIDSvc).Status -ne 'Running') {
 
 #region Shell Launcher Configuration
 
-If ($AutoLogon -or $AVDClientShell -or !$Windows10) {
+If ($AutoLogon -or $AVDClientShell -or -not $Windows10) {
     Write-Log -EntryType Information -EventId 113 -Message "Starting Assigned Access Configuration Section."
     . "$DirConfigurationScripts\AssignedAccessWmiBridgeHelpers.ps1"
     if ($AVDClientShell) {
@@ -858,9 +901,9 @@ If ($AutoLogon -or $AVDClientShell -or !$Windows10) {
             $configFile = "$DirShellLauncherSettings\AVDClient_AutoLogon.xml"
             Write-Log -EntryType Information -EventId 114 -Message "Enabling AVD Client Shell Launcher Settings with Autologon via WMI MDM bridge."
         }
-        ElseIf ($Yubikey) {
-            $configFile = "$DirShellLauncherSettings\AVDClient_Yubikey.xml"
-            Write-Log -EntryType Information -EventId 114 -Message "Enabling AVD Client Shell Launcher Settings for Yubikey via WMI MDM bridge."
+        ElseIf ($SecurityKey) {
+            $configFile = "$DirShellLauncherSettings\AVDClient_SecurityKey.xml"
+            Write-Log -EntryType Information -EventId 114 -Message "Enabling AVD Client Shell Launcher Settings for Security Keys via WMI MDM bridge."
         }
         Else {
             $configFile = "$DirShellLauncherSettings\AVDClient.xml"
@@ -885,7 +928,7 @@ If ($AutoLogon -or $AVDClientShell -or !$Windows10) {
             Exit 1
         }
     }
-    ElseIf (!$Windows10 -and !$AVDClientShell) {
+    ElseIf (-not $Windows10 -and -not $AVDClientShell) {
         Write-Log -EntryType Information -EventId 113 -Message "Configuring Multi-App Kiosk Settings."
         If ($AutoLogon) {
             if ($ShowDisplaySettings) {
@@ -897,16 +940,16 @@ If ($AutoLogon -or $AVDClientShell -or !$Windows10) {
         }
         Else {
             if ($ShowDisplaySettings) {
-                if ($Yubikey) {
-                    $configFile = Join-Path -Path $DirMultiAppSettings -ChildPath "MultiAppWithSettings_Yubikey.xml"
+                if ($SecurityKey) {
+                    $configFile = Join-Path -Path $DirMultiAppSettings -ChildPath "MultiAppWithSettings_SecurityKey.xml"
                 }
                 Else {
                     $configFile = Join-Path -Path $DirMultiAppSettings -ChildPath "MultiAppWithSettings.xml"
                 }
             }
             Else {
-                if ($Yubikey) {
-                    $configFile = Join-Path -Path $DirMultiAppSettings -ChildPath "MultiApp_Yubikey.xml"
+                if ($SecurityKey) {
+                    $configFile = Join-Path -Path $DirMultiAppSettings -ChildPath "MultiApp_SecurityKey.xml"
                 }
                 Else {
                     $configFile = Join-Path -Path $DirMultiAppSettings -ChildPath "MultiApp.xml"
@@ -963,7 +1006,7 @@ Else {
 
 #region Prevent Microsoft AAD Broker Timeout
 
-If ($AutoLogon) {
+If ($AutoLogon -and -not ($Triggers -contains 'IdleTimer')) {
     $TaskName = "(AVD Client) - Restart AAD Sign-in"
     $TaskDescription = 'Restarts the AAD Sign-in process if there are no active connections to prevent a stale sign-in attempt.'
     Write-Log -EntryType Information -EventId 135 -Message "Creating Scheduled Task: '$TaskName'."
@@ -988,7 +1031,6 @@ If ($AutoLogon) {
 }
 
 #endregion Prevent Microsoft AAD Broker Timeout
-
 If ($ScriptExitCode -eq 1618) {
     Write-Log -EntryType Error -EventId 135 -Message "At least one critical failure occurred. Exiting Script and restarting computer."
     Stop-Transcript
@@ -997,7 +1039,7 @@ If ($ScriptExitCode -eq 1618) {
 Else {
     $ScriptExitCode -eq 1641
 }
-
+    
 Write-Log -EntryType Information -EventId 150 -Message "Updating Group Policy"
 $gpupdate = Start-Process -FilePath 'GPUpdate' -ArgumentList '/force' -Wait -PassThru
 Write-Log -EntryType Information -EventID 151 -Message "GPUpdate Exit Code: [$($GPUpdate.ExitCode)]"
@@ -1005,4 +1047,3 @@ $null = cmd /c reg add 'HKLM\Software\Kiosk' /v Version /d "$($version.ToString(
 Write-Log -EntryType Information -EventId 199 -Message "Ending Kiosk Mode Configuration version '$($version.ToString())' with Exit Code: $ScriptExitCode"
 Stop-Transcript
 Exit $ScriptExitCode
-#endregion Main Script

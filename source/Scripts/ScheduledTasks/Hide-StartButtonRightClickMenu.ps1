@@ -21,8 +21,14 @@ $WinX = "$env:SystemDrive\Users\$AutoLogonUser\Appdata\local\Microsoft\Windows\W
 #region Main
 
 Write-EventLog -LogName $EventLog -Source $EventSource -EntryType Information -EventId 1000 -Message "Executing '$Script:FullName'."
-Write-EventLog -LogName $EventLog -Source $EventSource -EntryType Information -EventId 1001 -Message "Listing folders under '$WinX'."
 $DefaultGroupCount = (Get-ChildItem -Path "$env:SystemDrive\Users\Default\Appdata\Local\Microsoft\Windows\Winx").Count
+If (Test-Path -Path $WinX) {
+    Write-EventLog -LogName $EventLog -Source $EventSource -EntryType Information -EventId 1001 -Message "Found '$WinX'."
+    Write-EventLog -LogName $EventLog -Source $EventSource -EntryType Information -EventId 1001 -Message "Listing folders under '$WinX'."
+} Else {
+    Write-EventLog -LogName $EventLog -Source $EventSource -EntryType Warning -EventId 1001 -Message "Could not find '$WinX'. Exiting script."
+    Exit
+}
 $HiddenCount = (Get-ChildItem -Path $WinX -Hidden).Count
 $FoldersToHide = Get-ChildItem -Path $winX
 If ($HiddenCount -lt $DefaultGroupCount -or $FolderstoHide) {
