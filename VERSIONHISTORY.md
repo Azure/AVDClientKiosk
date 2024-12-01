@@ -1,6 +1,13 @@
 # Version History
 
-## 5.0 (Current Version)
+## 6.0 (Current Version)
+
+This is a [feature] release.
+
+1. Reintroduced support for the SessionDisconnect event trigger in the autologon scenario.
+2. Introduced support for a inactivity timeout trigger.
+
+## 5.0
 
 This is a [Feature] release.
 

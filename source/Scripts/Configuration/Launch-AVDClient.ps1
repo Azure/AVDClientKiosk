@@ -51,7 +51,7 @@
     This integer value determines the time in seconds that can pass with cached credentials in the Remote Desktop Client and no remote sessions connections. Default = 900 seconds.
 
 .PARAMETER Triggers
-    This array value determines the triggers for the actions that this script will take. The choices are ( 'SessionDisconnect', 'SessionDisconnect' and 'IdleTimer' or 'IdleTimer' )  or 'DeviceRemoval'.
+    This array value determines the triggers for the actions that this script will take. The choices are ( 'SessionDisconnect', 'SessionDisconnect' and 'IdleTimeout' or 'IdleTimeout' )  or 'DeviceRemoval'.
 
 .PARAMETER TriggerAction
     The action this script executes when the Trigger occurs. The choices are 'Lock', 'Logoff', 'ResetClient'.
@@ -62,6 +62,10 @@
 param (
 
     [string]$DeviceVendorID,
+
+    [string]$EventLog,
+
+    [string]$EventSource,
   
     [bool]$SmartCard,
 
@@ -76,28 +80,51 @@ param (
 )
 
 $VBScriptPath = $PSCommandPath.Replace('.ps1', '.vbs')
-Start-Transcript -Path "$env:Temp\$(($MyInvocation.MyCommand.Name).Replace('.ps1', '.log'))" -Force
 
 Function Restart-Script {
-    Write-Output "Relaunching this script."
+    Write-Log -EventID 550 "Relaunching $($MyInvocation.MyCommand.Name) after killing all processes."
     $ProcessList = 'Microsoft.AAD.BrokerPlugin', 'msrdc', 'msrdcw'
     $Processes = Get-Process
     ForEach ($Process in $ProcessList) {
         $Processes | Where-Object { $_.Name -eq $Process } | Stop-Process -Force
     }
-    Stop-Transcript
     Start-Process -FilePath "wscript.exe" -ArgumentList "`"$VBScriptPath`""
     # Kill current Powershell process to prevent multiple powershell processes from running.
     Get-Process -Id $PID | Stop-Process -Force
 }
 
+Function Write-Log {
+    [CmdletBinding()]
+    param (
+        [Parameter()]
+        [string]
+        $EventLog = $EventLog,
+        [Parameter()]
+        [string]
+        $EventSource = $EventSource,
+        [Parameter()]
+        [string]
+        [ValidateSet('Information', 'Warning', 'Error')]
+        $EntryType = 'Information',
+        [Parameter(Position = 0)]
+        [Int]
+        $EventID,
+        [Parameter(Position = 1)]
+        [string]
+        $Message
+    )
+    Write-EventLog -LogName $EventLog -Source $EventSource -EntryType $EntryType -EventId $EventId -Message $Message -ErrorAction SilentlyContinue
+}
+
+Write-Log -EventID 500 -Message "Starting $($MyInvocation.MyCommand.Name)"
+
 # Handle Client Reset in the Autologon scenario
-If ($Env:UserName -eq 'KioskUser0' -and (Test-Path -Path 'HKCU:\Software\Microsoft\RdClientRadc')) {
-    Write-Output 'User Information Cached. Resetting the Remote Desktop Client.'
+If ($Env:UserName -eq 'KioskUser0' -and (Test-Path -Path 'HKCU:\Software\Microsoft\RdClientRadc\Feeds')) {
+    Write-Log -EventID 501 -Message 'User Information Cached. Resetting the Remote Desktop Client.'
     Get-Process | Where-Object { $_.Name -eq 'msrdcw' } | Stop-Process -Force
     Get-Process | Where-Object { $_.Name -eq 'Microsoft.AAD.BrokerPlugin' } | Stop-Process -Force
     $reset = Start-Process -FilePath "$env:ProgramFiles\Remote Desktop\msrdcw.exe" -ArgumentList "/reset /f" -wait -PassThru
-    Write-Output "msrdcw.exe /reset exit code: [$($reset.ExitCode)]"
+    Write-Log -EventID 502 -message "msrdcw.exe /reset exit code: [$($reset.ExitCode)]"
 }
 # Turn off Telemetry on every launch since this is not a policy.
 $RegKey = 'HKCU:\Software\Microsoft\RdClientRadc'
@@ -105,7 +132,7 @@ $RegValue = 'EnableMSRDCTelemetry'
 New-Item -Path $RegKey -Force | Out-Null
 New-ItemProperty -Path $RegKey -Name $RegValue -PropertyType DWORD -Value 0 -Force | Out-Null
 
-Write-Output "Starting Remote Desktop Client."
+Write-Log -EventID 503 -Message "Starting Remote Desktop Client."
 If ($Env:UserName -eq 'KioskUser0') {
     # Always start client with subscribe Url in Autologon scenario
     $MSRDCW = Start-Process -FilePath "$env:ProgramFiles\Remote Desktop\Msrdcw.exe" -ArgumentList "ms-rd:subscribe?url=$SubscribeUrl" -PassThru -WindowStyle Maximized
@@ -131,9 +158,11 @@ if ($SubscribeUrl -notmatch '.us') {
     } until ($null -ne $User -or $null -ne $MSRDCW.ExitCode)
 
     If ($User) {
+        Write-Log -EventID 505 -Message 'User Information Found. Determining if user has only 1 resource assigned to connect to that resource automatically.'
         $Apps = $AVDInfo.TenantCollection.remoteresourcecollection
         If ($SubscribeUrl -match '.us') { $env = 'avdgov' } Else { $env = 'avdarm' }
         If ($apps.count -eq 1) {
+            Write-Log -EventID 506 -Message 'Only 1 resource assigned to user. Automatically connecting.'
             $URL = -join ("ms-avd:connect?workspaceId=", $WorkSpaceOID, "&resourceid=", $apps.ID, "&username=", $User, "&env=", $env, "&version=0")
             Start-Process -FilePath "$URL"
         }
@@ -143,16 +172,18 @@ if ($SubscribeUrl -notmatch '.us') {
 If ($Triggers -contains 'DeviceRemoval' -or $Triggers -contains 'SessionDisconnect') {
     # Must set up a WMI Event Subscription to monitor for device removal or session disconnect events.
     If ($Triggers -contains 'DeviceRemoval') {
-        Write-Output "Creating WMI Event Subscription for Device Removal."
         If ($null -ne $DeviceVendorID -and $DeviceVendorID -ne '') {
             If ($SmartCard) {
+                Write-Log -EventID 510 -Message "Creating WMI Event Subscription to detect the removal of SmartCards or Devices from Vendor ID: $DeviceVendorId."
                 $InstanceDevicePropsQuery = "TargetInstance.PNPClass = 'SmartCard' OR TargetInstance.PNPDeviceID LIKE '%VID_$DeviceVendorID%'"
             }
             Else {
+                Write-Log -EventID 510 -Message "Creating WMI Event Subscription to detect the removal of Devices from Vendor ID: $DeviceVendorId."
                 $InstanceDevicePropsQuery = "TargetInstance.PNPDeviceID LIKE '%VID_$DeviceVendorID%'"
             }
         }
         Elseif ($SmartCard) {
+            Write-Log -EventID 510 -Message "Creating WMI Event Subscription to detect the removal of SmartCards."
             $InstanceDevicePropsQuery = "TargetInstance.PNPClass = 'SmartCard'"
         }
             
@@ -160,7 +191,7 @@ If ($Triggers -contains 'DeviceRemoval' -or $Triggers -contains 'SessionDisconne
         $SourceIdentifier = "Remove_Security_Device_Event"
     }
     Else {
-        Write-Output "Creating WMI Event Subscription for Remote Session Disconnect."
+        Write-Log -EventID 510 -Message "Creating WMI Event Subscription for Remote Session Disconnect."
         $Query = "SELECT * FROM __InstanceCreationEvent WITHIN 2 WHERE TargetInstance ISA 'Win32_NTLogEvent' AND TargetInstance.Logfile = 'Microsoft-Windows-TerminalServices-RDPClient/Operational' AND TargetInstance.EventCode = '1026'"
         $SourceIdentifier = "Session_Disconnect_Event"
     }
@@ -170,25 +201,24 @@ If ($Triggers -contains 'DeviceRemoval' -or $Triggers -contains 'SessionDisconne
     If ($Env:UserName -eq 'KioskUser0' -and $Triggers -contains 'DeviceRemoval') {
         $Action = {
             Function Restart-Script {
-                Write-Output "Relaunching this script."
+                Write-Log -EventID 550 "Relaunching $($MyInvocation.MyCommand.Name) after killing all processes."
                 $ProcessList = 'Microsoft.AAD.BrokerPlugin', 'msrdc', 'msrdcw'
                 $Processes = Get-Process
                 ForEach ($Process in $ProcessList) {
                     $Processes | Where-Object { $_.Name -eq $Process } | Stop-Process -Force
                 }
-                Stop-Transcript
                 Start-Process -FilePath "wscript.exe" -ArgumentList "`"$VBScriptPath`""
                 # Kill current Powershell process to prevent multiple powershell processes from running.
                 Get-Process -Id $PID | Stop-Process -Force
             }
 
-            If (Test-Path -Path 'HKCU:\Software\Microsoft\RdClientRadc') { $CachePresent = $true }
+            If (Test-Path -Path 'HKCU:\Software\Microsoft\RdClientRadc\Feeds') { $CachePresent = $true }
             If (Get-Process | Where-Object { $_.Name -eq 'msrdcw' }) { $MSRDCWOpen = $true }
 
             $pnpEntity = $EventArgs.NewEvent.TargetInstance
-            Write-Output "Device Removed:`n`tCaption: $($pnpEntity.Caption)`n`tPNPDeviceID: $($pnpEntity.PNPDeviceID)`n`tManufacturer: $($pnpEntity.Manufacturer)"
+            Write-Log -EventID 525 -Message "Device Removed:`n`tCaption: $($pnpEntity.Caption)`n`tPNPDeviceID: $($pnpEntity.PNPDeviceID)`n`tManufacturer: $($pnpEntity.Manufacturer)"
             If ($MSRDCWOpen -and -not $CachePresent) {
-                Write-Output "The MSRDCW window is open and there are no cached credentials. Nothing to do."
+                Write-Log -EventID 526 "The MSRDCW window is open and there are no cached credentials. Nothing to do."
             }
             Else {
                 Restart-Script
@@ -198,32 +228,31 @@ If ($Triggers -contains 'DeviceRemoval' -or $Triggers -contains 'SessionDisconne
     ElseIf ($Env:UserName -eq 'KioskUser0' -and $Triggers -contains 'SessionDisconnect') {
         $Action = {
             Function Restart-Script {
-                Write-Output "Relaunching this script."
+                Write-Log -EventID 550 "Relaunching $($MyInvocation.MyCommand.Name) after killing all processes."
                 $ProcessList = 'Microsoft.AAD.BrokerPlugin', 'msrdc', 'msrdcw'
                 $Processes = Get-Process
                 ForEach ($Process in $ProcessList) {
                     $Processes | Where-Object { $_.Name -eq $Process } | Stop-Process -Force
-                }
-                Stop-Transcript
+                }                
                 Start-Process -FilePath "wscript.exe" -ArgumentList "`"$VBScriptPath`""
                 # Kill current Powershell process to prevent multiple powershell processes from running.
                 Get-Process -Id $PID | Stop-Process -Force
             }
             
-            If (Test-Path -Path 'HKCU:\Software\Microsoft\RdClientRadc') { $CachePresent = $true }
+            If (Test-Path -Path 'HKCU:\Software\Microsoft\RdClientRadc\Feeds') { $CachePresent = $true }
             If (Get-Process | Where-Object { $_.Name -eq 'msrdcw' }) { $MSRDCWOpen = $true }
             If (Get-Process | Where-Object { $_.Name -eq 'msrdc' }) { $MSRDC = $true }
 
             If ($MSRDCWOpen -and -not $CachePresent) {
-                Write-Output "The MSRDCW window is open and there are no cached credentials. Nothing to do."
+                Write-Log -EventID 530 -Message "The MSRDCW window is open and there are no cached credentials. Nothing to do."
             }
             Else {
                 If (-Not $MSRDCWOpen) {
-                    Write-Output "MSRDCW is not running. Assuming that the user closed the client window."
+                    Write-Log -EventID 540 -Message "MSRDCW is not running. Assuming that the user closed the client window."
                     Restart-Script                
                 }
                 # This is main section where we look at session host disconnect events in the event log and determine if we need to reset the client.
-                Write-Output "Filtering Session Disconnect (EventId: 1026) messages in the 'Microsoft-Windows-TerminalServices-RDPClient/Operational' log."
+                Write-Log -EventID 575 -Message "Filtering Session Disconnect (EventId: 1026) messages in the 'Microsoft-Windows-TerminalServices-RDPClient/Operational' log."
                 # Initial event filter
                 $TwoMinsAgo = (Get-Date).AddMinutes(-2)
                 $EventFilter = @{
@@ -251,40 +280,40 @@ If ($Triggers -contains 'DeviceRemoval' -or $Triggers -contains 'SessionDisconne
                 $remoteConnectionEvents = $Events | Where-Object $MessageFilter
                 [int]$totalFilteredEvents = $logoffEvents.Count + $remoteConnectionEvents.Count
                 
-                Write-Output "Event Log Filtering Results:`n`nTotal unfiltered 1026 events: $($Events.count) ; Total filtered by reason code: $totalFilteredEvents"
+                Write-Log -EventID 576 -Message "Event Log Filtering Results:`n`nTotal unfiltered 1026 events: $($Events.count) ; Total filtered by reason code: $totalFilteredEvents"
                 # Must consider remote connection initiated events first because they tell us that the user is not present at the local terminal and we want to close connections
                 # and clear the client cache immediately
                 If ($remoteConnectionEvents) {
-                    Write-Output "A local session was disconnected due to a remote session logon. Resetting the client after closing any remaining sessions and stopping the client."
+                    Write-Log -EventID 577 -Message "A local session was disconnected due to a remote session logon. Resetting the client after closing any remaining sessions and stopping the client."
                     Restart-Script
                 }
                 ElseIf ($logoffEvents) {
                     # Found logoff events, now determine if there are any active connections to a session host. The idea is to support multiple session host connections
                     # and allow the user to cleanly logoff of remote session hosts or have one disconnect while working in another. Common scenario for an administrative
                     # user utilizing a General User host pool and a Priveleged User host pool.
-                    Write-Output "There are local logoff or disconnection events that may warrant a client reset."
+                    Write-Log -EventID 578 -Message "There are local logoff or disconnection events that may warrant a client reset."
                     If ($MSRDC) {
                         $counter = 0
-                        Write-Output 'Detected open MSRDC connections. Waiting up to 30 seconds for them to disconnect.'
+                        Write-Log -EventID 579 -Message 'Detected open MSRDC connections. Waiting up to 30 seconds for them to disconnect.'
                         Do {
                             $counter ++
                             Start-Sleep -Seconds 1
                         } Until ($counter -eq 30 -or ($null -eq (Get-Process | Where-Object { $_.Name -eq 'msrdc' })))
                         If ($Counter -lt 30) {
-                            Write-Output "Open connections closed after $counter seconds."
+                            Write-Log -EventID 580 "Open connections closed after $counter seconds."
                         }
                     }
                     # Support for multiple remote sessions. Check for msrdc processes again after waiting for them to close for 30 seconds. If they are not present we can reset the client, else we can quit.
                     If ($null -eq (Get-Process | Where-Object { $_.Name -eq 'msrdc' })) {
-                        Write-Output "No open session host connections. Resetting client."
+                        Write-Log -EventID 581 -Message "No open session host connections. Resetting client."
                         Restart-Script                                
                     }
                     Else {
-                        Write-Output "There are still active remote desktop sessions. Assuming that user is still active and therefore, not resetting client."
+                        Write-Log -EventID 582 -Message "There are still active remote desktop sessions. Assuming that user is still active and therefore, not resetting client."
                     }
                 }
                 Else {
-                    Write-Output "All 1026 events were filtered out. There is no reason to perform a client reset."
+                    Write-Log -EventID 583 -Message "All 1026 events were filtered out. There is no reason to perform a client reset."
                 }
             }
         }
@@ -292,42 +321,69 @@ If ($Triggers -contains 'DeviceRemoval' -or $Triggers -contains 'SessionDisconne
     ElseIf ($Triggers -contains 'DeviceRemoval' -and $TriggerAction -eq 'Lock') {
         $Action = {
             $pnpEntity = $EventArgs.NewEvent.TargetInstance
-            Write-Output "Device Removed:`n`tCaption: $($pnpEntity.Caption)`n`tPNPDeviceID: $($pnpEntity.PNPDeviceID)`n`tManufacturer: $($pnpEntity.Manufacturer)"                   
-            Write-Output "Locking the computer."
+            Write-Log -EventID 525 -Message "Device Removed:`n`tCaption: $($pnpEntity.Caption)`n`tPNPDeviceID: $($pnpEntity.PNPDeviceID)`n`tManufacturer: $($pnpEntity.Manufacturer)"                   
+            Write-Log -EventID 526 -Message "Locking the computer."
             Start-Process -FilePath 'rundll32.exe' -ArgumentList "user32.dll`,LockWorkStation"
         }
     }
     Elseif ($Triggers -contains 'DeviceRemoval' -and $TriggerAction -eq 'Logoff') {
         $Action = {
             $pnpEntity = $EventArgs.NewEvent.TargetInstance
-            Write-Output "Device Removed:`n`tCaption: $($pnpEntity.Caption)`n`tPNPDeviceID: $($pnpEntity.PNPDeviceID)`n`tManufacturer: $($pnpEntity.Manufacturer)"
-            Write-Output "Logging off user."
-            Stop-Transcript
+            Write-Log -EventID 525 -Message "Device Removed:`n`tCaption: $($pnpEntity.Caption)`n`tPNPDeviceID: $($pnpEntity.PNPDeviceID)`n`tManufacturer: $($pnpEntity.Manufacturer)"
+            Write-Log -EventID 526 -Message "Logging off user."
             Get-WmiObject -Class Win32_OperatingSystem | Invoke-WmiMethod -Name Win32Shutdown -Argument 0
         }
     }
     Register-WmiEvent -Query $Query -Action $Action -SourceIdentifier $SourceIdentifier -SupportEvent
 }
 
-if ($Env:UserName -eq 'KioskUser0' -and $Triggers -contains 'IdleTimer') {
+if ($Triggers -contains 'IdleTimeout' -and ($env:Username -eq 'KioskUser0' -or $TriggerAction -eq 'Logoff')) {
+    Write-Log -EventID 540 -Message "IdleTimeout is configured."
     $timer = 0
     $interval = 60 # Check every 60 seconds
     Do {
-        if (Test-Path -Path 'HKCU:\Software\Microsoft\RdClientRadc') {
+        if (Test-Path -Path 'HKCU:\Software\Microsoft\RdClientRadc\Feeds') {
             if (-not (Get-Process | Where-Object { $_.Name -eq 'msrdc' })) {
-                $timer += $interval
-                if ($timer -ge $timeout) {
-                    # Perform the action after 15 minutes of inactivity
-                    Restart-Script
+                If ($timer -eq 0) {
+                    Write-Log -EventID 541 -Message "Cached Credentials found with no active connections. Starting the Idle Timer"
                 }
+                Else {
+                    Write-Log -EventID 542 -Message "Idle Timer running. Current Idle Time = $($timer/60) minutes."
+                }
+                if ($timer -ge $timeout) {
+                    Write-Log -EventID 543 -Message "Idle timeout: $($timeout/60) minutes reached."
+                    # Perform the action after 15 minutes of inactivity
+                    If ($TriggerAction -eq 'ResetClient') {
+                        Restart-Script
+                    }
+                    Elseif ($TriggerAction -eq 'Lock') {
+                        Write-Log -EventID 526 -Message "Locking the computer."
+                        Start-Process -FilePath 'rundll32.exe' -ArgumentList "user32.dll`,LockWorkStation"
+                    }
+                    Elseif ($TriggerAction -eq 'Logoff') {
+                        Write-Log -EventID 526 -Message "Logging off user."
+                        Get-WmiObject -Class Win32_OperatingSystem | Invoke-WmiMethod -Name Win32Shutdown -Argument 0
+                    }
+                }
+                $timer += $interval
             } else {
                 # Reset the timer if the process is found
-                $timer = 0
+                If ($timer -gt 0) {
+                    Write-Log -EventID 544 -Message "Remote Desktop connection(s) found. Resetting Idle Timer after $($timer/60) minutes."
+                    $timer = 0
+                }
             }
         } else {
-            $timer = 0
+            If ($timer -gt 0) {
+                Write-Log -EventID 545 -Message "Cached Credentials not found. Resetting Idle Timer after $($timer/60) minutes."
+                $timer = 0
+            }
         }
-        Start-Sleep -Seconds $interval
+        $i = 0
+        While ($null -eq $MSRDCW.ExitCode -and $i -ne 12) {
+            Start-Sleep -Seconds 5
+            $i++
+        }
     } Until ($null -ne $MSRDCW.ExitCode)
 }
 Else {
@@ -337,18 +393,16 @@ Else {
     } Until ($null -ne $MSRDCW.ExitCode)
 }
 
-Write-Output "The Remote Desktop Client closed with exit code [$($MSRDCW.exitcode)]."
+Write-Log -EventID 560 -Message "The Remote Desktop Client closed with exit code [$($MSRDCW.exitcode)]."
 
 If ($Env:UserName -eq 'KioskUser0' -and $MSRDCW.ExitCode -ne -1) {
     # ExitCode -1 is returned when the AVD client is forceably closed with Stop-Process.
+    Write-Log -EventID 570 -Message "The Remote Desktop client was closed by the user. Restarting Script."
     Restart-Script  
 }
 Elseif ($MSRDCW.ExitCode -eq 0) {
     # Sign out the user if they closed the Remote Desktop Client using the [X] at the top right of the window.
-    Write-Output "Logging off user."
-    Write-Output "Exiting `"$PSCommandPath`""
-    Stop-Transcript
+    Write-Log -EventID 595 -Message "The Remote Desktop client was closed by the user. Logging off user."
     Get-WmiObject -Class Win32_OperatingSystem | Invoke-WmiMethod -Name Win32Shutdown -Argument 0
 }
-Write-Output "Exiting `"$PSCommandPath`""
-Stop-Transcript
+Write-Log -EventID 599 -Message "Exiting `"$($MyInvocation.MyCommand.Name)`""
