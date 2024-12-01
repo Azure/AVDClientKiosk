@@ -163,7 +163,9 @@ Else {
         Throw 'You cannot specify a TriggerAction of ResetClient without AutoLogon'
     }
     If ($Triggers -contains 'DeviceRemoval' -and $SmartCard -eq $false -and ($null -eq $DeviceVendorID -or $DeviceVendorID -eq '')) {
-        Throw 'You must specify either a DeviceVendorID or SmartCard when Triggers = "DeviceRemoval"'
+        Throw 'You must specify either a DeviceVendorID or SmartCard when Triggers contains "DeviceRemoval"'
+    } ElseIf ($Triggers -contains 'DeviceRemoval' -and $SmartCard -and ($null -ne $DeviceVendorID -and $DeviceVendorID -ne '')) {
+        Throw 'You cannot specify both a SmartCard and DeviceVendorID when the Triggers contain "DeviceRemoval"'
     }
 }
 #endegion

@@ -173,20 +173,13 @@ If ($Triggers -contains 'DeviceRemoval' -or $Triggers -contains 'SessionDisconne
     # Must set up a WMI Event Subscription to monitor for device removal or session disconnect events.
     If ($Triggers -contains 'DeviceRemoval') {
         If ($null -ne $DeviceVendorID -and $DeviceVendorID -ne '') {
-            If ($SmartCard) {
-                Write-Log -EventID 510 -Message "Creating WMI Event Subscription to detect the removal of SmartCards or Devices from Vendor ID: $DeviceVendorId."
-                $InstanceDevicePropsQuery = "TargetInstance.PNPClass = 'SmartCard' OR TargetInstance.PNPDeviceID LIKE '%VID_$DeviceVendorID%'"
-            }
-            Else {
                 Write-Log -EventID 510 -Message "Creating WMI Event Subscription to detect the removal of Devices from Vendor ID: $DeviceVendorId."
                 $InstanceDevicePropsQuery = "TargetInstance.PNPDeviceID LIKE '%VID_$DeviceVendorID%'"
-            }
         }
-        Elseif ($SmartCard) {
+        Else {
             Write-Log -EventID 510 -Message "Creating WMI Event Subscription to detect the removal of SmartCards."
             $InstanceDevicePropsQuery = "TargetInstance.PNPClass = 'SmartCard'"
-        }
-            
+        }            
         $Query = "SELECT * FROM __InstanceDeletionEvent WITHIN 2 WHERE TargetInstance ISA 'Win32_PnPEntity' AND ($InstanceDevicePropsQuery)"
         $SourceIdentifier = "Remove_Security_Device_Event"
     }
