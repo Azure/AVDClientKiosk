@@ -327,7 +327,7 @@ If ($Triggers -contains 'DeviceRemoval' -or $Triggers -contains 'SessionDisconne
             Get-WmiObject -Class Win32_OperatingSystem | Invoke-WmiMethod -Name Win32Shutdown -Argument 0
         }
     }
-    Register-WmiEvent -Query $Query -Action $Action -SourceIdentifier $SourceIdentifier -SupportEvent
+    Register-CimIndicationEvent -Query $Query -Action $Action -SourceIdentifier $SourceIdentifier -SupportEvent
 }
 
 if ($Triggers -contains 'IdleTimeout' -and ($env:Username -eq 'KioskUser0' -or $TriggerAction -eq 'Logoff')) {
