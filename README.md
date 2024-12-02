@@ -183,7 +183,8 @@ The table below highlights the allowed combination of parameters. If a cell if l
 
 ### Manual Installation
 
-***Important*** You need to run the PowerShell script with system priviledges. The easiest way to do this is to download [PSExec](https://learn.microsoft.com/en-us/sysinternals/downloads/psexec). Then extract the Zip to a folder and open an administrative command prompt.
+> [!Important]
+> You need to run the PowerShell script with system priviledges. The easiest way to do this is to download [PSExec](https://learn.microsoft.com/en-us/sysinternals/downloads/psexec). Then extract the Zip to a folder and open an administrative command prompt.
 
 1. Execute PowerShell as SYSTEM by running the following command:
 
@@ -201,8 +202,8 @@ The table below highlights the allowed combination of parameters. If a cell if l
 
 4. Then execute the script using the correct parameters as exemplified below:
 
-    > [!NOTE]
-    > These parameter combinations are not the only ones possible. See Table 3 above.
+   > [!Important]
+   > These parameter combinations are not the only ones possible. See Table 3 above.
 
     * Scenario 1 Options
 
